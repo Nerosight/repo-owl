@@ -1,6 +1,6 @@
-use std::{env, fs, process::ExitCode};
+use std::{env, fs, path::Path, process::ExitCode};
 
-use repo_owl::{Language, fetch_repos, pick_repo, render, select_books};
+use repo_owl::{Language, fetch_repos, languages, pick_repo, render, select_books};
 
 const USAGE: &str = "\
 repo-owl: draws a pixel owl reading books in your latest repo's languages
@@ -10,14 +10,6 @@ Usage:
   repo-owl --fake \"Python:70,Rust:30\" [--repo-name my-repo] [--out preview.svg]
 
 The token falls back to the GITHUB_TOKEN or GH_TOKEN environment variable.";
-
-/// Colors for `--fake`, which runs without the API that normally supplies them.
-const FAKE_COLORS: [(&str, &str); 11] = [
-    ("Python", "#3572A5"), ("Rust", "#dea584"), ("JavaScript", "#f1e05a"),
-    ("TypeScript", "#3178c6"), ("HTML", "#e34c26"), ("CSS", "#663399"),
-    ("Jupyter Notebook", "#DA5B0B"), ("Go", "#00ADD8"), ("Shell", "#89e051"),
-    ("Java", "#b07219"), ("C++", "#f34b7d"),
-];
 
 #[derive(Default)]
 struct Args {
@@ -75,6 +67,9 @@ fn run() -> Result<(), String> {
 
     let books = select_books(&languages, min_percent);
     let names: Vec<&str> = books.iter().map(|b| b.name.as_str()).collect();
+    if let Some(dir) = Path::new(&out).parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
+    }
     fs::write(&out, render(&repo_name, &books)).map_err(|e| format!("can't write {out}: {e}"))?;
     println!("Owl is reading {repo_name}: {} -> {out}", names.join(", "));
     Ok(())
@@ -111,7 +106,7 @@ fn parse_fake(spec: &str) -> Result<Vec<Language>, String> {
                 .ok_or_else(|| format!("--fake entries look like Name:amount, got '{part}'"))?;
             let name = name.trim().to_string();
             let bytes = bytes.trim().parse().map_err(|_| format!("bad amount in '{part}'"))?;
-            let color = FAKE_COLORS.iter().find(|(n, _)| *n == name).map(|(_, c)| c.to_string());
+            let color = languages::color(&name);
             Ok(Language { name, color, bytes })
         })
         .collect()

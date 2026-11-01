@@ -2,6 +2,7 @@
 //! animated with CSS only, since GitHub strips scripts from READMEs.
 
 use crate::art::{self, Art, FONT_CHARS, GLYPH_H, GLYPH_W, Rgb, Sprite};
+use crate::languages;
 use crate::model::Book;
 
 const W: usize = 96;
@@ -16,7 +17,11 @@ const BOOK_X: i32 = 40;
 const BOOK_Y: i32 = 29;
 const BOOK_W: usize = 16;
 const BOOK_H: usize = 20;
+/// Logos are square; the fallback label is centered in the same box.
+const LOGO_SIZE: i32 = 12;
+const LOGO_X: i32 = BOOK_X + 3;
 const BRANCH_Y: i32 = 50;
+const STACK_X: i32 = 68;
 const SPINE_W: usize = 22;
 const SPINE_H: usize = 7;
 const SIGN_Y: i32 = 57;
@@ -52,6 +57,7 @@ pub fn render(repo_name: &str, books: &[Book]) -> String {
 
     let mut back = Layer::new();
     let mut twinkle = [Layer::new(), Layer::new()];
+    // Every third star twinkles, alternating between two out-of-phase groups.
     for (i, &(x, y)) in STARS.iter().enumerate() {
         match i % 3 {
             0 => twinkle[i / 3 % 2].dot(x, y, STAR),
@@ -61,7 +67,8 @@ pub fn render(repo_name: &str, books: &[Book]) -> String {
     back.sprite(&art.moon, 80, 5);
     back.sprite(&art.branch, 0, BRANCH_Y);
     for (i, book) in books.iter().skip(1).enumerate() {
-        let x = 68 + if i == 0 { 1 } else { -1 };
+        // Nudge alternate books sideways so the stack looks hand-placed.
+        let x = STACK_X + if i == 0 { 1 } else { -1 };
         let y = BRANCH_Y - SPINE_H as i32 * (i as i32 + 1);
         spine(&mut back, &art, book, x, y);
     }
@@ -99,18 +106,19 @@ pub fn render(repo_name: &str, books: &[Book]) -> String {
         svg += &format!("<rect y=\"{y}\" width=\"{W}\" height=\"{h}\" fill=\"{color}\"/>");
     }
     svg += &back.to_rects();
-    svg += &format!("<g class=\"tw\">{}</g>", twinkle[0].to_rects());
-    svg += &format!("<g class=\"tw tw2\">{}</g>", twinkle[1].to_rects());
-    svg += &format!(
-        "<g class=\"head\">{}<g class=\"lid\">{}</g></g>",
-        head.to_rects(),
-        lid.to_rects()
-    );
+    svg += &group("tw", &twinkle[0].to_rects());
+    svg += &group("tw tw2", &twinkle[1].to_rects());
+    svg += &group("head", &(head.to_rects() + &group("lid", &lid.to_rects())));
     svg += &front.to_rects();
-    svg += &format!("<g class=\"p1\">{}</g>", page1.to_rects());
-    svg += &format!("<g class=\"p2\">{}</g>", page2.to_rects());
+    svg += &group("p1", &page1.to_rects());
+    svg += &group("p2", &page2.to_rects());
     svg += "</svg>\n";
     svg
+}
+
+/// Wraps content in a `<g>` whose class picks its CSS animation.
+fn group(class: &str, content: &str) -> String {
+    format!("<g class=\"{class}\">{content}</g>")
 }
 
 /// The book the owl holds: its hand-drawn logo if there is one, otherwise
@@ -123,11 +131,10 @@ fn cover(layer: &mut Layer, art: &Art, book: &Book) {
         layer.dot(BOOK_X + 2, y + BOOK_Y, shade(color, 0.85));
     }
     match art::logo(&book.name) {
-        Some(logo) => layer.sprite(&logo, BOOK_X + 3, BOOK_Y + 4),
+        Some(logo) => layer.sprite(&logo, LOGO_X, BOOK_Y + 4),
         None => {
-            let label = abbreviation(&book.name);
-            let x = BOOK_X + 3 + (12 - text_width(&label)) / 2;
-            layer.text(&art.font, &label, x, BOOK_Y + 8, ink_for(color));
+            let label = languages::label(&book.name);
+            layer.centered_text(&art.font, &label, LOGO_X, LOGO_SIZE, BOOK_Y + 8, ink_for(color));
         }
     }
 }
@@ -141,9 +148,8 @@ fn spine(layer: &mut Layer, art: &Art, book: &Book, x: i32, y: i32) {
             layer.dot(band_x, y + dy, shade(color, 1.3));
         }
     }
-    let label = abbreviation(&book.name);
-    let tx = x + (SPINE_W as i32 - text_width(&label)) / 2;
-    layer.text(&art.font, &label, tx, y + 1, ink_for(color));
+    let label = languages::label(&book.name);
+    layer.centered_text(&art.font, &label, x, SPINE_W as i32, y + 1, ink_for(color));
 }
 
 fn sign(layer: &mut Layer, art: &Art, repo_name: &str) {
@@ -154,8 +160,7 @@ fn sign(layer: &mut Layer, art: &Art, repo_name: &str) {
     layer.rect(x, SIGN_Y, SIGN_W, 7, SIGN_EDGE);
     layer.rect(x + 1, SIGN_Y + 1, SIGN_W - 2, 5, SIGN_WOOD);
     let label = truncate(&repo_name.to_uppercase(), MAX_SIGN_CHARS);
-    let tx = x + (SIGN_W as i32 - text_width(&label)) / 2;
-    layer.text(&art.font, &label, tx, SIGN_Y + 1, SIGN_TEXT);
+    layer.centered_text(&art.font, &label, x, SIGN_W as i32, SIGN_Y + 1, SIGN_TEXT);
 }
 
 fn book_shape(layer: &mut Layer, x: i32, y: i32, w: usize, h: usize, color: Rgb) {
@@ -165,25 +170,6 @@ fn book_shape(layer: &mut Layer, x: i32, y: i32, w: usize, h: usize, color: Rgb)
 
 fn book_color(book: &Book) -> Rgb {
     book.color.as_deref().and_then(parse_hex).unwrap_or(NO_COLOR)
-}
-
-/// Short spine labels; anything not listed uses its first three letters.
-fn abbreviation(language: &str) -> String {
-    const KNOWN: [(&str, &str); 14] = [
-        ("Python", "PY"), ("Rust", "RS"), ("JavaScript", "JS"), ("TypeScript", "TS"),
-        ("Jupyter Notebook", "NB"), ("Kotlin", "KT"), ("Shell", "SH"), ("PowerShell", "PS"),
-        ("Markdown", "MD"), ("Haskell", "HS"), ("Ruby", "RB"), ("Swift", "SWF"),
-        ("Dockerfile", "DKR"), ("Makefile", "MK"),
-    ];
-    if let Some((_, short)) = KNOWN.iter().find(|(name, _)| *name == language) {
-        return short.to_string();
-    }
-    language
-        .to_uppercase()
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '+' || *c == '#')
-        .take(3)
-        .collect()
 }
 
 fn truncate(text: &str, max: usize) -> String {
@@ -268,6 +254,11 @@ impl Layer {
                 }
             }
         }
+    }
+
+    /// Draws `text` horizontally centered in the `width` pixels from `x`.
+    fn centered_text(&mut self, font: &Sprite, text: &str, x: i32, width: i32, y: i32, color: Rgb) {
+        self.text(font, text, x + (width - text_width(text)) / 2, y, color);
     }
 
     /// Emits the layer as `<rect>`s, merging runs of same-colored pixels.

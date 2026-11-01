@@ -29,6 +29,7 @@ runs:
       shell: bash
       env:
         ACTION_REF: ${{ github.action_ref }}
+        GH_TOKEN: ${{ inputs.token }}
       run: |
         if [ "$RUNNER_OS" != "Linux" ]; then
           echo "::error::repo-owl runs on Linux runners only (this one is $RUNNER_OS). Use runs-on: ubuntu-latest."
@@ -39,12 +40,28 @@ runs:
           ARM64) target=aarch64-unknown-linux-gnu ;;
           *) echo "::error::repo-owl has no build for $RUNNER_ARCH runners."; exit 1 ;;
         esac
-        base=https://github.com/Nerosight/repo-owl/releases
+        # Exact tags (@v0.1.0) download that release; partial tags (@v0, @v0.1)
+        # download the newest release they cover; branches and SHAs get the latest.
         if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          url="$base/download/$ACTION_REF/repo-owl-$target.tar.gz"
+          tag="$ACTION_REF"
+        elif [[ "$ACTION_REF" =~ ^v[0-9]+(\.[0-9]+)?$ ]]; then
+          tag=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/Nerosight/repo-owl/releases?per_page=100" |
+            jq -r --arg p "$ACTION_REF." '[.[] | select(.draft | not) | .tag_name | select(startswith($p))][0] // empty')
+          if [ -z "$tag" ]; then
+            echo "::error::No repo-owl release matches $ACTION_REF."
+            exit 1
+          fi
         else
-          url="$base/latest/download/repo-owl-$target.tar.gz"
+          tag=latest
         fi
+        base=https://github.com/Nerosight/repo-owl/releases
+        if [ "$tag" = latest ]; then
+          url="$base/latest/download/repo-owl-$target.tar.gz"
+        else
+          url="$base/download/$tag/repo-owl-$target.tar.gz"
+        fi
+        echo "Using repo-owl $tag"
         curl -fsSL "$url" | tar -xz -C "$RUNNER_TEMP"
 
     - name: Draw the owl
@@ -63,13 +80,18 @@ runs:
       shell: bash
       env:
         OWL_OUT: ${{ inputs.output }}
+        TOKEN: ${{ inputs.token }}
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add -- "$OWL_OUT"
         if git diff --cached --quiet; then
           echo "The owl is reading the same books as yesterday; nothing to commit."
-        else
-          git commit -m "Redraw repo-owl"
-          git push
+          exit 0
         fi
+        git commit -m "Redraw repo-owl"
+        # Push with inputs.token, not the credentials actions/checkout stored;
+        # the empty extraheader clears those.
+        remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        git -c http.https://github.com/.extraheader= pull --rebase "$remote" "$GITHUB_REF_NAME"
+        git -c http.https://github.com/.extraheader= push "$remote" "HEAD:refs/heads/$GITHUB_REF_NAME"

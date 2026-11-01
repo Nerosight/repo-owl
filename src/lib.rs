@@ -1,5 +1,6 @@
 mod art;
 mod github;
+pub mod languages;
 mod model;
 mod render;
 mod select;
