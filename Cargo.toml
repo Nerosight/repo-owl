@@ -1,0 +1,17 @@
+[package]
+name = "repo-owl"
+version = "0.1.0"
+edition = "2024"
+description = "A pixel-art owl for your GitHub profile that reads books in your latest repo's languages"
+license = "MIT"
+repository = "https://github.com/Nerosight/repo-owl"
+
+[dependencies]
+png = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+
+[profile.release]
+strip = true
+lto = true

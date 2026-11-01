@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked
+      - name: Render a preview
+        run: cargo run --locked -- --fake "Python:60,Rust:30,Kotlin:10" --repo-name preview --out preview.svg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview
+          path: preview.svg

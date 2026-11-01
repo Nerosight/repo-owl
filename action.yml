@@ -1,0 +1,75 @@
+name: repo-owl
+description: A pixel-art owl for your profile README that reads books in your latest repo's languages
+author: Nerosight
+branding:
+  icon: book-open
+  color: purple
+
+inputs:
+  username:
+    description: Whose repos the owl reads
+    default: ${{ github.repository_owner }}
+  output:
+    description: Where to write the SVG, relative to the repo root
+    default: repo-owl.svg
+  min-percent:
+    description: Languages under this share of the repo don't get a book
+    default: "10"
+  exclude-repos:
+    description: Comma-separated repo names the owl should never read
+    default: ""
+  token:
+    description: Token for the GitHub API and for pushing the SVG
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Download repo-owl
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        if [ "$RUNNER_OS" != "Linux" ]; then
+          echo "::error::repo-owl runs on Linux runners only (this one is $RUNNER_OS). Use runs-on: ubuntu-latest."
+          exit 1
+        fi
+        case "$RUNNER_ARCH" in
+          X64) target=x86_64-unknown-linux-gnu ;;
+          ARM64) target=aarch64-unknown-linux-gnu ;;
+          *) echo "::error::repo-owl has no build for $RUNNER_ARCH runners."; exit 1 ;;
+        esac
+        base=https://github.com/Nerosight/repo-owl/releases
+        if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          url="$base/download/$ACTION_REF/repo-owl-$target.tar.gz"
+        else
+          url="$base/latest/download/repo-owl-$target.tar.gz"
+        fi
+        curl -fsSL "$url" | tar -xz -C "$RUNNER_TEMP"
+
+    - name: Draw the owl
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        OWL_USER: ${{ inputs.username }}
+        OWL_OUT: ${{ inputs.output }}
+        OWL_MIN: ${{ inputs.min-percent }}
+        OWL_EXCLUDE: ${{ inputs.exclude-repos }}
+      run: |
+        "$RUNNER_TEMP/repo-owl" --user "$OWL_USER" --out "$OWL_OUT" \
+          --min-percent "$OWL_MIN" --exclude "$OWL_EXCLUDE"
+
+    - name: Commit if the owl changed
+      shell: bash
+      env:
+        OWL_OUT: ${{ inputs.output }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add -- "$OWL_OUT"
+        if git diff --cached --quiet; then
+          echo "The owl is reading the same books as yesterday; nothing to commit."
+        else
+          git commit -m "Redraw repo-owl"
+          git push
+        fi
